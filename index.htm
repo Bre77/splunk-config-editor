@@ -1,0 +1,762 @@
+<html>
+
+<head>
+    <title>Splunk Config Editor</title>
+    <script src="https://cdn.jsdelivr.net/npm/vue/dist/vue.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/keen-ui@1.2.0/dist/keen-ui.min.js"></script>
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/keen-ui@1.2.0/dist/keen-ui.min.css" rel="stylesheet" />
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Oxygen, Ubuntu, Cantarell, Fira Sans, Droid Sans, Helvetica, Arial, sans-serif;
+        }
+
+        #settings {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(12em, 1fr));
+            grid-gap: 0.5em;
+        }
+
+        .app {
+            font-weight: bold;
+        }
+
+        .actions {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            grid-gap: 0.5em;
+        }
+
+        .action {
+            width: 100%
+        }
+
+        #container {
+            display: grid;
+            grid-gap: 0 1rem;
+        }
+
+        .conf {
+            font-style: italic;
+        }
+
+        .stanzatext {
+            color: #E00000;
+            font-family: Consolas;
+            overflow: hidden;
+            font-weight: bold;
+        }
+
+        .showhide {
+            width: 24px;
+        }
+
+        .line {
+            white-space: nowrap;
+            display: inline-block;
+            overflow: hidden;
+        }
+
+        .same {
+            background-color: #d1ffd1;
+        }
+
+        .diff {
+            background-color: #ffd1d1;
+        }
+
+        .copy {
+            margin-bottom: 0;
+            display: inline-flex;
+        }
+
+        .field {
+            color: #863B00;
+            font-family: Consolas;
+        }
+
+        .value {
+            color: #000000;
+            font-family: Consolas;
+            display: inline-flex;
+            margin-bottom: 0;
+        }
+
+        .missing {
+            color: rgb(200, 200, 200);
+            white-space: pre-line;
+        }
+
+        .servers {
+            border: 1px solid black;
+        }
+
+        .confgrid {
+            display: block;
+            /*display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(50rem, auto));
+            grid-gap: 1rem;*/
+        }
+
+        .conf {
+            /*display: inline-grid;*/
+            display: block;
+        }
+
+        .skip {
+            color: #777777;
+        }
+
+        .add {
+            color: #0a490a
+        }
+
+        .warning {
+            color: #E00000
+        }
+
+        .linebox {
+            display: inline-flexbox;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="vue">
+        <h1>Splunk Config Editor</h1>
+
+        <div id="settings">
+            <ui-select multiple :options="Object.keys(this.servers)" v-model="servers_enabled" placeholder="None">Servers</ui-select>
+            <ui-select multiple has-search :options="confs" v-model="confs_enabled" placeholder="None">Config Types</ui-select>
+            <ui-select multiple has-search :options="AllApps()" v-model="apps_enabled" placeholder="All">Apps</ui-select>
+            
+            <ui-button @click="$refs['addserver'].open()">Add Server</ui-button>
+        </div>
+        <div id="container" :style="{'grid-template-columns': `24px repeat(${servers_enabled.length}, 1fr)`}">
+            <div v-for="(server,x) in servers_enabled" :style="{'grid-column': x+2}">{{server}}</div>
+            <div v-for="(server,x) in servers_enabled" :style="{'grid-column': x+2}" class="actions">
+                <ui-button v-if="action_copy==null" @click="action_copy=server" icon="content_copy" class="action"
+                    color="primary" :disabled="!(server in changes)">Copy</ui-button>
+                <template v-else>
+                    <ui-button v-if="action_copy==server" @click="action_copy=null" icon="cancel" class="action">Cancel
+                    </ui-button>
+                    <ui-button v-else :disabled="action_paste!==null"
+                        @click="action_paste=server; $refs['transfer'].open()" color="primary" icon="content_paste"
+                        class="action">Paste</ui-button>
+                </template>
+                <ui-button @click="newconfig.server=server; $refs['new'].open()" icon="post_add" class="action"
+                    color="green">New</ui-button>
+                <ui-button @click="action_remove=server; $refs['remove'].open()" icon="backspace" class="action"
+                    color="red" :disabled="stanzas.filter(x=>x[0]==server).length == 0">Remove Stanza</ui-button>
+            </div>
+            <template v-for="app in (apps_enabled.length ? apps_enabled : AllApps())">
+                <div class="showhide" :style="{'grid-column': 1}">
+                    <ui-icon-button color="green" size="mini" :type="show.app[app] ? 'secondary' : 'primary'"
+                        :icon="show.app[app] ? 'arrow_drop_up' : 'arrow_drop_down'" @click="ShowHide('app',[app])">
+                    </ui-icon-button>
+                </div>
+                <div v-for="(server,x) in servers_enabled" :style="{'grid-column': x+2}">
+                    <template v-if="There(config,[server,app])">
+                        <ui-checkbox v-model="copy[server+'|'+app]" class="copy" color="accent"
+                            @change="CascadeCheckbox(server+'|'+app)">
+                            <span class="app">{{app}}</span>
+                        </ui-checkbox>
+                    </template>
+                    <template v-else>
+                        <span class="missing">({{app}} missing)</span>
+                    </template>
+                </div>
+
+                <template v-for="conf in AllConfs(app)" v-if="!show.app[app]"><!--settings.confs-->
+                    <div class="showhide" :style="{'grid-column': 1}">
+                        <ui-icon-button color="orange" size="mini"
+                            :type="show.conf[app+'|'+conf] ? 'secondary' : 'primary'"
+                            :icon="show.conf[app+'|'+conf] ? 'arrow_drop_up' : 'arrow_drop_down'"
+                            @click="ShowHide('conf',[app,conf])"></ui-icon-button>
+                    </div>
+                    <div v-for="(server,x) in servers_enabled" :style="{'grid-column': x+2}">
+                        <template v-if="There(config,[server,app])">
+                            <ui-checkbox v-model="copy[server+'|'+app+'|'+conf]" class="copy" color="accent"
+                                @change="CascadeCheckbox(server+'|'+app+'|'+conf)">
+                                <span v-if="There(config,[server,app,conf])" class="conf">{{conf}}</span>
+                                <span v-else class="missing">({{conf}} missing)</span>
+                            </ui-checkbox>
+                        </template>
+                    </div>
+                    <template v-for="stanza in AllStanzas(app,conf)" v-if="!show.conf[app+'|'+conf]">
+                        <div class="showhide" :style="{'grid-column': 1}">
+                            <ui-icon-button color="red" size="mini"
+                                :type="show.stanza[app+'|'+conf+'|'+stanza] ? 'primary' : 'secondary'"
+                                :icon="show.stanza[app+'|'+conf+'|'+stanza] ? 'arrow_drop_up' : 'arrow_drop_down'"
+                                @click="ShowHide('stanza',[app,conf,stanza])"></ui-icon-button>
+                        </div>
+                        <div v-for="(server,x) in servers_enabled" class="stanza" :style="{'grid-column': x+2}">
+                            <template v-if="There(config,[server,app,conf,stanza])">
+                                <ui-checkbox v-model="copy[server+'|'+app+'|'+conf+'|'+stanza]" class="copy"
+                                    color="accent" @change="CascadeCheckbox(server+'|'+app+'|'+conf+'|'+stanza)">
+                                    <span class="stanzatext">[{{stanza}}]</span>
+                                </ui-checkbox>
+                            </template>
+                            <template v-else>
+                                <span class="missing" v-if="There(config,[server,app])">({{stanza}} missing)</span>
+                            </template>
+                        </div>
+                        <template v-if="show.stanza[app+'|'+conf+'|'+stanza]">
+                            <template v-for="line in AllLines(app,conf,stanza)">
+                                <div v-for="(server,x) in servers_enabled" :class="'line '+Diff(app,conf,stanza,line)" :style="{'grid-column': x+2}">
+                                    <template v-if="There(config,[server,app,conf,stanza,line])">
+                                        <ui-checkbox v-model="copy[server+'|'+app+'|'+conf+'|'+stanza+'|'+line]"
+                                            class="copy">
+                                            <span class="field">{{line}}</span> =
+                                            <ui-textbox type="text" class="value"
+                                                v-model="config[server][app][conf][stanza][line]"
+                                                @change="Change(server,app,conf,stanza,line)" />
+                                        </ui-checkbox>
+                                    </template>
+                                    <template v-else>
+                                        <span class="missing" v-if="There(config,[server,app,conf,stanza])">({{line}}
+                                            missing)</span>
+                                    </template>
+                                </div>
+                            </template>
+                        </template>
+                    </template>
+                </template>
+            </template>
+        </div>
+        <ui-modal ref="addserver" title="Add Server">
+            These details will be stored in your browsers local storage for ease of use. Please be aware that this is
+            not a secure location to store credentials.<br><br>
+            <ui-textbox label="Hostname" placeholder="sh.splunkcloud.com" v-model="newserver.host"
+                :invalid="newserver.hosterror !== ''" :error="newserver.hosterror"></ui-textbox>
+            <ui-textbox label="Auth Token" v-model="newserver.auth" :invalid="newserver.autherror !== ''"
+                :error="newserver.autherror"></ui-textbox>
+                <span v-if="newserver.hosterror == 'Failed to fetch'"><br>If you are having difficulties connecting, try access the <a :href="'https://'+newserver.host+':8089'">Splunk API</a> in your browser, as you may need to accept the self signed certificate.<br>
+                Another common problem is CORS, which will require you to add <b>crossOriginSharingPolicy=*://ba.id.au</b> to the <b>[httpServer]</b> stanza in server.conf on the Splunk server you are connecting to.</span>
+            <ui-button slot="footer" @click="AddServer">Submit</button>
+        </ui-modal>
+        <ui-modal ref="transfer" :title="`Copy from ${action_copy} to ${action_paste}`"
+            @close="action_copy=null;action_paste=null;">
+            These are the configurations that will be created on {{action_paste}}. If an App doesn't exist a blank one
+            will be created, and all conf files will be modified in the local directory.<br>
+            <template v-for="appconfs,app in changes[action_copy]">
+                <template v-for="stanzas,conf in appconfs">
+                    <br><b><span :class="There(config,[action_paste,app]) ? 'skip':'add'">{{app}}</span>/<span
+                            :class="There(config,[action_paste,app,conf]) ? 'skip':'add'">{{conf}}.conf</span><span
+                            v-if="!There(config,[action_paste,app])" class="warning"> (This will create a new
+                            app!)</span></b><br>
+                    <span class="field">
+                        <template v-for="lines,stanza in stanzas"><br>
+                            <span :class="There(config,[action_paste,app,conf,stanza]) ? 'skip':'add'">[{{stanza}}]</span><br>
+                            <template v-for="value,line in lines">
+                                <span :class="There(config,[action_paste,app,conf,stanza,line]) ? 'skip':'add'">{{line}} = </span>
+                                <span :class="There(config,[action_paste,app,conf,stanza,line]) && config[action_paste][app][conf][stanza][line] == value ? 'skip':'add'">{{value}}</span><br>
+                            </template>
+                        </template>
+                    </span>
+                </template>
+            </template>
+            <ui-button @click="Transfer()" :disabled="!changes[action_copy]" slot="footer" :loading="running">Do it!
+            </ui-button>
+        </ui-modal>
+        <ui-modal ref="new" :title="`New configuration on ${newconfig.server}`" @close="newconfig.server=null">
+            <template v-if="newconfig.server">
+                <ui-select has-search :options="Object.keys(config[newconfig.server]).sort()" v-model="newconfig.app">
+                    App Context</ui-select>
+                <ui-select has-search :options="confs_enabled" v-model="newconfig.conf">Conf Type</ui-select>
+                <ui-textbox v-if="newconfig.conf" list="stanzas" required v-model="newconfig.stanza">Stanza</ui-textbox>
+                <!--<input type="text" list="stanzas" />
+                <datalist id="stanzas" v-if="newconfig.app && newconfig.conf">
+                    <option v-for="stanza in Object.keys(config[newconfig.server][newconfig.app][newconfig.conf])" :value="stanza">
+                </datalist>-->
+                <template v-if="newconfig.stanza">
+                    <ui-textbox v-for="line,i in newconfig.lines" v-model="newconfig.lines[i]" :key="i"
+                        :label="i==0?'Properties':null" placeholder="field=value" :invalid="!line_valid.test(line)"
+                        error="Invalid Format, this property will be ignored"
+                        @change="NewPropertyLine(i)">
+                    </ui-textbox>
+                </template>
+                <span class="warning" v-if="newconfig.error">{{newconfig.error}}</span>
+            </template>
+            <ui-button @click="New()"
+                :disabled="!(newconfig.server && newconfig.conf && newconfig.stanza && newconfig.lines)" slot="footer"
+                :loading="running">Save</ui-button>
+        </ui-modal>
+        <ui-modal ref="remove" :title="`Remove configuration on ${action_remove}`" @close="action_remove=null">
+            These stanzas and all their properties will be permanently deleted.<br>
+                <template v-for="stanza in stanzas.filter(x=>x[0]==action_remove)">
+                    <br><b>{{stanza[1]}}</b>/local/<b>{{stanza[2]}}</b>.conf <span class="stanzatext">[{{stanza[3]}}]</span>
+                </template>
+            <ui-button @click="Remove()" :disabled="!(action_remove in changes)" slot="footer" :loading="running">Point of no return</ui-button>
+        </ui-modal>
+    </div>
+    <script>
+
+        
+
+        function isObject(item) {
+            return (item && typeof item === 'object' && !Array.isArray(item));
+        }
+        function mergeDeep(target, ...sources) {
+            if (!sources.length) return target;
+            const source = sources.shift();
+
+            if (isObject(target) && isObject(source)) {
+                for (const key in source) {
+                    if (isObject(source[key])) {
+                        if (!target[key]) Object.assign(target, { [key]: {} });
+                        mergeDeep(target[key], source[key]);
+                    } else {
+                        Object.assign(target, { [key]: source[key] });
+                    }
+                }
+            }
+        }
+
+        const parser = new DOMParser();
+        const app_whitelist = ['author', 'configured', 'description', 'label', 'version', 'visible']
+        const config_blacklist = ['eai:acl', 'eai:appName', 'eai:userName', 'maxDist', 'priority', 'sourcetype', 'termFrequencyWeightedDist']
+        const confs = ['props', 'inputs', 'outputs', 'transforms', 'app', 'server', 'authentication', 'authorize', 'collections', 'commands', 'datamodels', 'eventtypes', 'fields', 'global-banner', 'health', 'indexes', 'limits', 'macros', 'passwords', 'savedsearches', 'serverclass', 'tags', 'web']
+        const line_valid = RegExp('^[^#=]+=[^=]+$')
+
+        Vue.prototype.localStorage = window.localStorage
+        var vue = new Vue({
+            el: '#vue',
+            data: {
+                apps_enabled: [],
+                confs: confs,
+                confs_enabled: ['props'],
+                default: {},
+                config: {},
+                servers: {},
+                servers_enabled: [],
+                copy: {},
+                action_copy: null,
+                action_paste: null,
+                action_remove: null,
+                running: false,
+                show: {
+                    app: { 'system': false },
+                    conf: {},
+                    stanza: {}
+                },
+                newserver: {
+                    hosterror: '',
+                    autherror: '',
+                    host: "",
+                    auth: ""
+                },
+                newconfig: {
+                    server: null,
+                    app: 'search',
+                    conf: null,
+                    stanza: null,
+                    lines: [''],
+                    error: null
+                },
+                line_valid: line_valid
+            },
+            computed: {
+                changes() {
+                    output = {}
+                    for (const x of Object.keys(this.copy).filter(x => this.copy[x])) {
+                        keys = x.split('|')
+                        keys.reduce((o, y, i) => {
+                            if (i < 4) {
+                                return this.SafeObject(o, y)
+                            } else {
+                                o[y] = this.config[keys[0]][keys[1]][keys[2]][keys[3]][[keys[4]]]
+                            }
+                        }, output)
+                    }
+                    return output
+                },
+                stanzas() {
+                    return Object.keys(this.copy).filter(x => this.copy[x]).map(x=>x.split("|")).filter(x=>x.length==4)
+                }
+            },
+            methods: {
+                Request(method, host, endpoint, data=null, auth = this.servers[host].auth) {
+                    return fetch(`https://${host}:8089/${endpoint}`, {
+                        headers: { "Authorization": `Bearer ${auth}` },
+                        method: method,
+                        body: data ==null ? null : data //.replaceAll("+", "%2B")
+                    }).catch(e => {
+                        console.warn(e)
+                        return Promise.reject({ cause: 'host', message: e.message });
+                    }).then(resp => {
+                        console.log(method, resp.status, resp.url)
+                        if (resp.ok) {
+                            return resp.text()
+                        } else if (resp.status == 401) {
+                            return Promise.reject({ cause: 'auth', message: "Unauthorized" });
+                        } else if (resp.status == 409) {
+                            console.warn("Conflict", resp.text)
+                            return resp.text()
+                        } else return Promise.reject({ cause: 'host', message: `Splunk returned ${resp.status}` });
+                    })
+                },
+                Transfer() {
+                    this.running = true
+                    return Object.keys(this.changes[this.action_copy]).reduce((p, app) =>
+                        p.then(_ => {
+                            if (!this.config[this.action_paste][app]) { //Create App if required
+                                return this.Request('GET',this.action_copy, `services/apps/local/${app}`).then(text => {
+                                    console.log(`Parsing ${this.action_copy} ${app} app`)
+                                    const xml = parser.parseFromString(text, "text/xml").firstElementChild
+                                    const content = xml.getElementsByTagName('entry')[0].getElementsByTagName('content')[0].firstElementChild.children
+                                    let output = [`name=${app}`]
+                                    for (const item of content) {
+                                        console.log(item)
+                                        name = item.attributes['name'].textContent
+                                        if (app_whitelist.includes(name)) {
+                                            output.push(`${encodeURIComponent(name)}=${encodeURIComponent(item.textContent)}`)
+                                        }
+                                    }
+                                    return output.join('&')
+                                })
+                                .then(data => this.Request('POST',this.action_paste, 'services/apps/local', data))
+                                .then(_ => this.SafeObject(this.config[this.action_paste], app))
+                            }
+                        })
+                        .then(_ => {
+                            return Object.keys(this.changes[this.action_copy][app]).reduce((p, conf) =>
+                                p.then(_ => {
+                                    return Object.keys(this.changes[this.action_copy][app][conf]).reduce((p, stanza) =>
+                                        p.then(_ => {
+                                            if (!(stanza in this.SafeObject(this.config[this.action_paste][app], conf))) { //Create Stanza if required
+                                                return this.Request('POST',this.action_paste, `servicesNS/nobody/${app}/configs/conf-${conf}`, `name=${encodeURIComponent(stanza)}`)
+                                                    .then(text => this.ParseConfig(this.action_paste, conf, text))
+                                                //.then(_ =>{this.SafeObject(this.config[this.action_paste][app][conf],stanza)}) This should be redundant
+                                            }
+                                        })
+                                        .then(_ => {
+                                            const data = Object.keys(this.changes[this.action_copy][app][conf][stanza]).map(line => {
+                                                return `${encodeURIComponent(line)}=${encodeURIComponent(this.config[this.action_copy][app][conf][stanza][line])}`
+                                            }, []).join('&')
+                                            return this.Request('POST',this.action_paste, `servicesNS/nobody/${app}/configs/conf-${conf}/${stanza}`, data)
+                                        })
+                                        .then(text => this.ParseConfig(this.action_paste, conf, text))
+                                        //.then(_ => this.Request('GET',this.action_paste, `servicesNS/nobody/${app}/configs/conf-${conf}/${stanza}/_reload`))
+                                    ,Promise.resolve())
+                                })
+                                .then(_ => this.Request('GET',this.action_paste, `servicesNS/nobody/${app}/configs/conf-${conf}/_reload`))
+                            ,Promise.resolve())
+                        })
+                    ,Promise.resolve())
+                    .then(_ => {
+                        this.running = false
+                        this.action_copy = null
+                        this.action_paste = null
+                        this.$refs['transfer'].close()
+                    })
+                    .catch(_ => {
+                        this.running = false
+                    })
+                },
+                New() {
+                    this.running = true
+                    return Promise.resolve()
+                        .then(_ => {
+                            if (!(this.newconfig.stanza in this.config[this.newconfig.server][this.newconfig.app][this.newconfig.conf])) { //Create Stanza if required
+                                return this.Request('POST',this.newconfig.server, `servicesNS/nobody/${this.newconfig.app}/configs/conf-${this.newconfig.conf}`, `name=${encodeURIComponent(this.newconfig.stanza)}`)
+                                    .then(text => this.ParseConfig(this.newconfig.server, this.newconfig.conf, text))
+                            } else return Promise.resolve()
+                        })
+                        .then(_ => {
+                            return this.newconfig.lines.filter(l => line_valid.test(l)).map(x=>x.split("=").map(y=>encodeURIComponent(y)).join("=")).join("&")
+                        })
+                        .then(data => this.Request('POST',this.newconfig.server, `servicesNS/nobody/${this.newconfig.app}/configs/conf-${this.newconfig.conf}/${encodeURIComponent(this.newconfig.stanza)}`, data))
+                        .then(text => this.ParseConfig(this.newconfig.server, this.newconfig.conf, text))
+                        .then(_ => this.Request('GET',this.newconfig.server, `servicesNS/nobody/${this.newconfig.app}/configs/conf-${this.newconfig.conf}/_reload`))
+                        .then(_ => {
+                            this.running = false
+                            this.newconfig.server = null
+                            this.newconfig.app = 'search'
+                            this.newconfig.conf = this.newconfig.conf || this.confs_enabled.length ? this.confs_enabled[0] : null
+                            this.newconfig.stanza = null
+                            this.newconfig.lines = ['']
+                            this.newconfig.error = null
+                            this.$refs['new'].close()
+                        })
+                        .catch(e => {
+                            this.running = false
+                            this.newconfig.error = `Something went wrong. ${e.message}`
+                        })
+                },
+                NewPropertyLine(i){
+                    if(line_valid.test(this.newconfig.lines[i]) && !this.newconfig.lines[i+1]){
+                        this.newconfig.lines.push('')
+                    }
+                },
+                Remove() {
+                    this.running = true
+                    return Object.keys(this.changes[this.action_remove]).reduce((p, app) =>
+                        p.then(_ => {
+                            return Object.keys(this.changes[this.action_remove][app]).reduce((p, conf) =>
+                                p.then(_ => {
+                                    return Object.keys(this.changes[this.action_remove][app][conf]).reduce((p, stanza) =>
+                                        p.then(_ => {
+                                            data = Object.keys(this.changes[this.action_remove][app][conf][stanza]).map(line => {
+                                                return `${encodeURIComponent(line)}=${encodeURIComponent(this.config[this.action_remove][app][conf][stanza][line])}`
+                                            }, []).join('&')
+                                            return this.Request('DELETE',this.action_remove, `servicesNS/nobody/${app}/configs/conf-${conf}/${encodeURIComponent(stanza)}`, data)
+                                        })
+                                        ,Promise.resolve()) // Don't parse this response
+                                        //.then(_ => this.Request('GET',this.action_remove, `servicesNS/nobody/${app}/configs/conf-${conf}/{stanza}/_reload`))
+                                })
+                                .then(_ => this.Request('GET',this.action_remove, `servicesNS/nobody/${app}/configs/conf-${conf}/_reload`))
+                                ,Promise.resolve())
+                        })
+                        ,Promise.resolve())
+                },
+                RemoveStanzas(server){
+                    return Object.keys(this.copy).filter(x => this.copy[x]).map(x=>x.split("|")).filter(x=>x[0]==server && x.length==4).map(x=>x.slide(1))
+                },
+                Change(server, app, conf, stanza, line) {
+                    return this.Request('POST',server, `servicesNS/nobody/${app}/configs/conf-${conf}/${encodeURIComponent(stanza)}`, `${encodeURIComponent(line)}=${encodeURIComponent(this.config[server][app][conf][stanza][line])}`)
+                        .then(text => this.ParseConfig(server, conf, text))
+                        .then(_ => this.Request('GET',server, `servicesNS/nobody/${app}/configs/conf-${conf}/_reload`))
+                },
+                CascadeCheckbox(path) {
+                    let o = path.split("|").reduce((o, k) => o[k], this.config)
+                    for (const k in o) {
+                        this.$set(this.copy, path + '|' + k, this.copy[path])
+                        //console.log(path+'|'+k,this.copy[path])
+                        if (typeof (o[k]) !== 'string') {
+                            this.CascadeCheckbox(path + '|' + k)
+                        }
+                    }
+                },
+                Diff(app,conf,stanza,line){
+                    if(this.servers_enabled.some(server=>!this.There(this.config, [server,app,conf,stanza,line]))) return "miss"
+                    const values = this.servers_enabled.map(server=>this.config[server][app][conf][stanza][line])
+                    return values.some(value=>value!==values[0]) ? "diff" : "same"
+                },
+                ShowHide(parent, children) {
+                    this.$set(this.show[parent], children.join('|'), !this.show[parent][children.join('|')])
+                    localStorage.setItem('show', JSON.stringify(this.show))
+                },
+                There(base, arr) {
+                    return arr.reduce((x, y) => {
+                        if (x !== false && y in x) {
+                            return x[y]
+                        } else return false
+                    }, base)
+                },
+                AllApps() {
+                    return this.servers_enabled.reduce((arr, server) => {
+                        if (this.There(this.config, [server])) {
+                            return arr.concat(Object.keys(this.config[server]))
+                        } else return arr
+                    }, []).sort().filter(function (item, pos, ary) {
+                        return !pos || item != ary[pos - 1];
+                    });
+                },
+                AllConfs(app) {
+                    return this.servers_enabled.reduce((arr, server) => {
+                        if (this.There(this.config, [server, app])) {
+                            return arr.concat(Object.keys(this.config[server][app]))
+                        } else return arr
+                    }, [])
+                    .filter(c=>this.confs_enabled.includes(c)) // Only show enabled confs
+                    .sort()
+                    .filter((item, pos, ary)=>{
+                        return !pos || item != ary[pos - 1];
+                    });
+                },
+                AllStanzas(app, conf) {
+                    return this.servers_enabled.reduce((arr, server) => {
+                        if (this.There(this.config, [server, app, conf])) {
+                            return arr.concat(Object.keys(this.config[server][app][conf]))
+                        } else return arr
+                    }, []).sort().filter(function (item, pos, ary) {
+                        return !pos || item != ary[pos - 1];
+                    });
+                },
+                AllLines(app, conf, stanza) {
+                    return this.servers_enabled.reduce((arr, server) => {
+                        if (this.There(this.config, [server, app, conf, stanza])) {
+                            return arr.concat(Object.keys(this.config[server][app][conf][stanza]))
+                        } else return arr
+                    }, []).sort().filter(function (item, pos, ary) {
+                        return !pos || item != ary[pos - 1];
+                    });
+                },
+                SafeObject(object, key) {
+                    if (!(key in object)) {
+                        this.$set(object, key, {})
+                    }
+                    return object[key]
+                },
+                AddServer() {
+                    return this.Request('GET',this.newserver.host, "services", null, this.newserver.auth).then(() => {
+                        this.newserver.hosterror = ''
+                        this.newserver.autherror = ''
+                        host = this.newserver.host
+                        
+                        this.$set(this.servers, host, { auth: this.newserver.auth})
+                        this.$set(this.config,host,{})
+                        this.$set(this.default,host,{})
+                        this.servers_enabled.push(host)
+
+                        this.newserver = {
+                            host: "",
+                            auth: ""
+                        }
+                        this.$refs['addserver'].close()
+                        this.Refresh([host],this.confs_enabled)
+                    }).catch(e => {
+                        if (e.cause == "host") {
+                            this.newserver.hosterror = e.message
+                            this.newserver.autherror = ''
+                        } else if (e.cause == "auth") {
+                            this.newserver.autherror = e.message
+                            this.newserver.hosterror = ''
+                        }
+                    })
+                },
+                Refresh(servers = this.servers_enabled, confs = this.confs_enabled) {
+                    return Promise.all(servers.map(server => {
+                        this.SafeObject(this.default, server)
+                        this.SafeObject(this.config, server)
+                        return confs.reduce((p, conf) =>
+                            p.then(_ => this.Request('GET',server, `services/properties/${conf}/default`))
+                                .then(text => this.ParseProperties(server, conf, text))
+                                .catch(e=>{
+                                    console.warn(e.message)
+                                    this.$set(this.default[server], conf, {})
+                                })
+                                .then(_ => this.Request('GET',server, `services/configs/conf-${conf}?count=-1`))
+                                .then(text => this.ParseConfig(server, conf, text))
+                                .catch(e=>{
+                                    console.warn(e.message)
+                                    this.$set(this.conf[server], conf, {})
+                                })
+                            , Promise.resolve())
+                    }))
+                },
+                ParseProperties(server, conf, text) {
+                    console.log(`Parsing ${server} ${conf} properties`)
+                    xml = parser.parseFromString(text, "text/xml").firstElementChild
+                    properties = {}
+                    for (let entry of xml.getElementsByTagName("entry")) {
+                        properties[entry.getElementsByTagName('title')[0].textContent] = this.Normalize(entry.getElementsByTagName('content')[0].textContent)
+                    }
+                    //console.log(server,conf,properties)
+                    this.$set(this.default[server], conf, properties)
+                },
+                ParseConfig(server, conf, text) {
+                    console.log(`Parsing ${server} ${conf} config`)
+                    xml = parser.parseFromString(text, "text/xml").firstElementChild
+
+                    // Little check to make sure were talking to the right software
+                    if (xml.getElementsByTagName("author")[0].getElementsByTagName("name")[0].textContent !== "Splunk") {
+                        console.warn("Endpoint Author isnt Splunk")
+                    }
+
+                    // server / app / conf / stanza / key = value
+                    for (const entry of xml.getElementsByTagName("entry")) {
+                        stanza = entry.getElementsByTagName('title')[0].textContent
+                        //lines = []
+                        lines = {}
+                        for (const line of entry.getElementsByTagName('content')[0].firstElementChild.children) {
+                            name = line.attributes['name'].textContent
+                            if (name == 'eai:acl') {
+                                for (const acl of line.firstElementChild.children) {
+                                    name = acl.attributes['name'].textContent
+                                    if (name == 'app') {
+                                        app = acl.textContent
+                                    }
+                                }
+                            } else if (config_blacklist.includes(name)) {
+                                // Metadata key 
+                            } else if (line.textContent == this.default[server][conf][name]) { //This should be safe without SafeObject
+                                //console.log(`Dropping ${name} because ${line.textContent} = ${this.default[server][conf][name]}`)
+                                // Exactly the same as system/default
+                            } else {
+                                lines[name] = line.textContent
+                                //lines.push([name,line.textContent])
+                            }
+                        }
+                        this.$set(this.SafeObject(this.SafeObject(this.config[server], app), conf), stanza, lines)
+                        /*for (line of lines){
+                            console.log(line)
+                            this.$set(this.SafeObject(this.SafeObject(this.SafeObject(this.config[server],app),conf),stanza),line[0],line[1])
+                        }*/
+
+                    }
+                },
+                Normalize(value) {
+                    switch (value.toLowerCase()) {
+                        case 'true':
+                            return '1'
+                            break;
+                        case 'false':
+                            return '0'
+                            break;
+                        default:
+                            return value
+                    }
+                }
+            },
+            mounted() {
+                if (localStorage.servers) {
+                    this.$set(this, 'servers', JSON.parse(localStorage.getItem('servers')))
+                }
+                if (localStorage.servers_enabled) {
+                    this.$set(this, 'servers_enabled', JSON.parse(localStorage.getItem('servers_enabled')))
+                }
+                if (localStorage.show) {
+                    this.$set(this, 'show', JSON.parse(localStorage.getItem('show')))
+                }
+                if (localStorage.confs_enabled) {
+                    this.$set(this, 'confs_enabled', JSON.parse(localStorage.getItem('confs_enabled')))
+                }
+                if (localStorage.apps_enabled) {
+                    this.$set(this, 'apps_enabled', JSON.parse(localStorage.getItem('apps_enabled')))
+                }
+                this.newconfig.conf = this.newconfig.conf || this.confs_enabled.length ? this.confs_enabled[0] : null
+                /*if (localStorage.settings) {
+                    mergeDeep(this.settings, JSON.parse(localStorage.getItem('settings')))
+                    //this.$set(this, 'settings', JSON.parse(localStorage.getItem('settings')))
+                }*/
+
+                if (Object.keys(this.servers).length == 0) {
+                    this.$refs['addserver'].open()
+                } else {
+                    this.Refresh(this.servers_enabled,this.confs_enabled)
+                }
+            },
+            watch: {
+                confs_enabled(next,prev){
+                    localStorage.setItem('confs_enabled', JSON.stringify(next))
+                    if(next.length>=prev.length){
+                        this.Refresh(this.servers_enabled,next.filter(x => !prev.includes(x)))
+                    }
+                    this.newconfig.conf = this.newconfig.conf || this.confs_enabled.length ? this.confs_enabled[0] : null
+                },
+                apps_enabled(next,prev){
+                    localStorage.setItem('apps_enabled', JSON.stringify(next))
+                },
+                servers(next,prev){
+                    localStorage.setItem('servers', JSON.stringify(next))
+                },
+                servers_enabled(next,prev){
+                    localStorage.setItem('servers_enabled', JSON.stringify(next))
+                    if(next.length>=prev.length){
+                        this.Refresh(next.filter(x => !prev.includes(x)),this.confs_enabled)
+                    }
+                },
+                show(x){
+                    localStorage.setItem('show', JSON.stringify(x))
+                },
+                /*settings(x){
+                    localStorage.setItem('settings', JSON.stringify(x))
+                }*/
+            }
+        })
+    </script>
+    <footer>Written by <a href="https://twitter.com/Bre77">Brett Adams</a></footer>
+</body>
+</html>
