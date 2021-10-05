@@ -207,6 +207,7 @@
                                 <div v-for="(server,x) in servers_enabled" :class="'line '+Diff(app,conf,stanza,line)" :style="{'grid-column': x+2}">
                                     <template v-if="There(config,[server,app,conf,stanza,line])">
                                         <ui-checkbox v-model="copy[server+'|'+app+'|'+conf+'|'+stanza+'|'+line]"
+                                            :disabled="(app_context !== global_context) && There(global,[server,conf,stanza,line])"
                                             class="copy">
                                             <span class="field">{{line}}</span> =
                                             <ui-textbox type="text" class="value"
