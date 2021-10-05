@@ -211,7 +211,8 @@
                                             <span class="field">{{line}}</span> =
                                             <ui-textbox type="text" class="value"
                                                 v-model="config[server][app][conf][stanza][line]"
-                                                @change="Change(server,app,conf,stanza,line)" />
+                                                @change="Change(server,app,conf,stanza,line)"
+                                                :disabled="(app_context !== global_context) && There(global,[server,conf,stanza,line])" />
                                         </ui-checkbox>
                                     </template>
                                     <template v-else>
@@ -319,16 +320,18 @@
         const config_blacklist = ['eai:acl', 'eai:appName', 'eai:userName', 'maxDist', 'priority', 'sourcetype', 'termFrequencyWeightedDist']
         const confs = ['props', 'inputs', 'outputs', 'transforms', 'app', 'server', 'authentication', 'authorize', 'collections', 'commands', 'datamodels', 'eventtypes', 'fields', 'global-banner', 'health', 'indexes', 'limits', 'macros', 'passwords', 'savedsearches', 'serverclass', 'tags', 'web']
         const line_valid = RegExp('^[^#=]+=[^=]+$')
+        const global_context = "system"
 
         Vue.prototype.localStorage = window.localStorage
         var vue = new Vue({
             el: '#vue',
             data: {
                 apps_enabled: [],
-                app_context: "system",
+                app_context: global_context,
                 confs: confs,
                 confs_enabled: ['props'],
                 default: {},
+                global: {},
                 config: {},
                 servers: {},
                 servers_enabled: [],
@@ -356,7 +359,8 @@
                     lines: [''],
                     error: null
                 },
-                line_valid: line_valid
+                line_valid: line_valid,
+                global_context: global_context
             },
             computed: {
                 changes() {
@@ -622,6 +626,7 @@
                     return Promise.all(servers.map(server => {
                         this.SafeObject(this.default, server)
                         this.SafeObject(this.config, server)
+                        this.SafeObject(this.global, server)
                         return confs.reduce((p, conf) =>
                             p.then(_ => this.Request('GET',server, `services/properties/${conf}/default`))
                                 .then(text => this.ParseProperties(server, conf, text))
@@ -658,7 +663,13 @@
                     }
 
                     // Clear out any existing config, otherwise we wont know if something is removed in the refresh
-                    this.$set(this.config, server, {})
+                    for (let app in this.config[server]){
+                        console.log(`Clearing ${app} ${conf}`)
+                        this.$set(this.config[server][app], conf, {})
+                    }
+                    if(this.app_context == global_context){
+                        this.$set(this.global[server], conf, {})
+                    }
 
                     // server / app / conf / stanza / key = value
                     for (const entry of xml.getElementsByTagName("entry")) {
@@ -685,12 +696,20 @@
                             }
                         }
                         this.$set(this.SafeObject(this.SafeObject(this.config[server], app), conf), stanza, lines)
+                        if(this.app_context == global_context){
+                            this.$set(this.SafeObject(this.global[server], conf), stanza, lines)
+                        }
                         /*for (line of lines){
                             console.log(line)
                             this.$set(this.SafeObject(this.SafeObject(this.SafeObject(this.config[server],app),conf),stanza),line[0],line[1])
                         }*/
-
                     }
+                    /*if(this.app_context == global_context){
+                        for (let app in this.config[server]){
+                            console.log(`Global ${app} ${conf}`)
+                            this.$set(this.SafeObject(this.global[server],app), conf, this.config[server][app][conf])
+                        }
+                    }*/
                 },
                 Normalize(value) {
                     switch (value.toLowerCase()) {
