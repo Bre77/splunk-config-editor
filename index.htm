@@ -129,7 +129,7 @@
             <ui-select multiple :options="Object.keys(this.servers)" v-model="servers_enabled" placeholder="None">Servers</ui-select>
             <ui-select multiple has-search :options="confs" v-model="confs_enabled" placeholder="None">Config Types</ui-select>
             <ui-select multiple has-search :options="AllApps()" v-model="apps_enabled" placeholder="All">Apps</ui-select>
-            <ui-select has-search :options="AllApps()" v-model="app_context" placeholder="All">Apps</ui-select>
+            <ui-select has-search :options="AllApps()" v-model="app_context" placeholder="All">App Context</ui-select>
             
             <ui-button @click="$refs['addserver'].open()">Add Server</ui-button>
         </div>
@@ -657,6 +657,9 @@
                         console.warn("Endpoint Author isnt Splunk")
                     }
 
+                    // Clear out any existing config, otherwise we wont know if something is removed in the refresh
+                    this.$set(this.config, server, {})
+
                     // server / app / conf / stanza / key = value
                     for (const entry of xml.getElementsByTagName("entry")) {
                         stanza = entry.getElementsByTagName('title')[0].textContent
@@ -727,7 +730,7 @@
                 if (Object.keys(this.servers).length == 0) {
                     this.$refs['addserver'].open()
                 } else {
-                    this.Refresh(this.servers_enabled,this.confs_enabled)
+                    this.Refresh() //this.servers_enabled,this.confs_enabled
                 }
             },
             watch: {
@@ -740,6 +743,12 @@
                 },
                 apps_enabled(next,prev){
                     localStorage.setItem('apps_enabled', JSON.stringify(next))
+                },
+                app_context(next,prev){
+                    localStorage.setItem('app_context', JSON.stringify(next))
+                    if(next !== prev){
+                        this.Refresh()
+                    }
                 },
                 servers(next,prev){
                     localStorage.setItem('servers', JSON.stringify(next))
