@@ -129,6 +129,7 @@
             <ui-select multiple :options="Object.keys(this.servers)" v-model="servers_enabled" placeholder="None">Servers</ui-select>
             <ui-select multiple has-search :options="confs" v-model="confs_enabled" placeholder="None">Config Types</ui-select>
             <ui-select multiple has-search :options="AllApps()" v-model="apps_enabled" placeholder="All">Apps</ui-select>
+            <ui-select has-search :options="AllApps()" v-model="app_context" placeholder="All">Apps</ui-select>
             
             <ui-button @click="$refs['addserver'].open()">Add Server</ui-button>
         </div>
@@ -232,7 +233,7 @@
             <ui-textbox label="Auth Token" v-model="newserver.auth" :invalid="newserver.autherror !== ''"
                 :error="newserver.autherror"></ui-textbox>
                 <span v-if="newserver.hosterror == 'Failed to fetch'"><br>If you are having difficulties connecting, try access the <a :href="'https://'+newserver.host+':8089'">Splunk API</a> in your browser, as you may need to accept the self signed certificate.<br>
-                Another common problem is CORS, which will require you to add <b>crossOriginSharingPolicy=*://ba.id.au</b> to the <b>[httpServer]</b> stanza in server.conf on the Splunk server you are connecting to.</span>
+                Another common problem is CORS, which will require you to add <b>crossOriginSharingPolicy=https://bre77.github.io</b> to the <b>[httpServer]</b> stanza in server.conf on the Splunk server you are connecting to.</span>
             <ui-button slot="footer" @click="AddServer">Submit</button>
         </ui-modal>
         <ui-modal ref="transfer" :title="`Copy from ${action_copy} to ${action_paste}`"
@@ -324,6 +325,7 @@
             el: '#vue',
             data: {
                 apps_enabled: [],
+                app_context: "system",
                 confs: confs,
                 confs_enabled: ['props'],
                 default: {},
@@ -627,7 +629,7 @@
                                     console.warn(e.message)
                                     this.$set(this.default[server], conf, {})
                                 })
-                                .then(_ => this.Request('GET',server, `services/configs/conf-${conf}?count=-1`))
+                                .then(_ => this.Request('GET',server, `servicesNS/nobody/${this.app_context}/configs/conf-${conf}?count=-1`))
                                 .then(text => this.ParseConfig(server, conf, text))
                                 .catch(e=>{
                                     console.warn(e.message)
